@@ -1,0 +1,187 @@
+# Import packages
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from xgboost import plot_importance
+from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score,f1_score, confusion_matrix, ConfusionMatrixDisplay, RocCurveDisplay
+import matplotlib.pyplot as plt
+import sklearn.metrics as metrics
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# IMPORT YOUR DATA
+df0 = pd.read_csv(r"directory file")
+
+# Gather basic information about the data
+df0.info()
+
+# Gather descriptive statistics about the data
+df0.describe()
+
+# Display all column names
+df0.info()
+
+# Rename columns
+df0 = df0.rename(columns={'Work_accident': 'work_accident',
+                          'average_montly_hours': 'average_monthly_hours',
+                          'time_spend_company': 'tenure',
+                          'Department': 'department'})
+
+# Display all column names after the update
+df0.info()
+
+# Check for missing values
+df1=df0.dropna()
+print(df0.shape)
+print(df1.shape)
+
+# Check for duplicates
+df1=df0.drop_duplicates()
+df1.shape
+
+# Drop duplicates and save resulting dataframe in a new variable as needed
+df1=df0.drop_duplicates(keep='first')
+df1.shape
+
+# Display first few rows of new dataframe as needed
+df1.head()
+
+# Create a boxplot to visualize distribution of `tenure` and detect any outliers
+sns.boxplot(x=df1['tenure'])
+
+# Determine the number of rows containing outliers
+outliers = df1['tenure'] > 5
+df1[outliers]
+
+# Get numbers of people who left vs. stayed
+stayed = df1['left'] == 0
+left = df1['left'] == 1
+print('employees that stayed = ' + str(df1[stayed].shape[0]))
+print('employees that left = ' + str(df1[left].shape[0]))
+
+# Get percentages of people who left vs. stayed
+total = df1.shape[0]
+left_pct = (df1[left].shape[0]/total)*100
+stayed_pct = (df1[stayed].shape[0]/total)*100
+print('employees that stayed = ' + str(stayed_pct))
+print('employees that left = ' + str(left_pct))
+
+# Create a plot
+sns.boxplot(x=df1['number_project'])
+
+# Create categorical designations
+salary = ['low','medium','high']
+
+# Encode `month` column as categoricals 
+df1['salary'] = pd.Categorical(df1['salary'], categories=salary, ordered=True)
+df1['salary_codes'] = df1['salary'].cat.codes
+df1['salary_codes'] = df1['salary_codes'].astype(float)
+sns.boxplot(x=df1['salary_codes'])
+
+# Create a plot
+df1['department'] = df1['department'].astype('str')
+df2 = pd.get_dummies(df1,columns=['department'])
+df2.info()
+
+# Create a plot as needed
+sns.boxplot(x=df2['average_monthly_hours'])
+
+# Isolate target variable (y)
+y = df2['left']
+# Isolate the features (X)
+x = df2.drop(['left','salary'],axis = 1)
+# Split into train and test sets
+# Assign the outputs as follows: X_train, X_test, y_train, y_test.
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, stratify=y, random_state=42)
+
+# 1. Instantiate the random forest classifier
+rf = RandomForestClassifier(random_state = 0)
+# 2. Create a dictionary of hyperparameters to tune 
+cv_params = {'n_estimators' : [50,75,100], 
+              'max_depth' : [None],        
+              'min_samples_leaf' : [2,3,4], 
+              'min_samples_split' : [2,3,4]
+            }
+# 3. Define a list of scoring metrics to capture
+scoring = ['accuracy', 'precision', 'recall', 'f1']
+# 4. Instantiate the GridSearchCV object
+rf_opt = GridSearchCV(rf, cv_params, scoring=scoring, cv=3, refit='f1')
+rf_opt.fit(x_train, y_train)
+rf_opt.best_params_
+
+def make_results(model_name:str, model_object, metric:str):
+    # Create dictionary that maps input metric to actual metric name in GridSearchCV
+    metric_dict = {'precision': 'mean_test_precision',
+                 'recall': 'mean_test_recall',
+                 'f1': 'mean_test_f1',
+                 'accuracy': 'mean_test_accuracy',
+                 }
+    # Get all the results from the CV and put them in a df
+    cv_results = pd.DataFrame(model_object.cv_results_)
+    # Isolate the row of the df with the max(metric) score
+    best_estimator_results = cv_results.iloc[cv_results[metric_dict[metric]].idxmax(), :]
+    # Extract Accuracy, precision, recall, and f1 score from that row
+    f1 = best_estimator_results.mean_test_f1
+    recall = best_estimator_results.mean_test_recall
+    precision = best_estimator_results.mean_test_precision
+    accuracy = best_estimator_results.mean_test_accuracy
+    # Create table of results
+    table = pd.DataFrame({'model': [model_name],
+                        'precision': [precision],
+                        'recall': [recall],
+                        'F1': [f1],
+                        'accuracy': [accuracy],
+                        },
+                       )
+    return table
+make_results('rf_opt', rf_opt, 'f1')
+
+# Get scores on test data
+rf_preds = rf_opt.predict(x_test)
+print("Random Forest")
+print("Accuracy:", "%.6f" % metrics.accuracy_score(y_test, rf_preds))
+print("Precision:", "%.6f" % metrics.precision_score(y_test, rf_preds))
+print("Recall:", "%.6f" % metrics.recall_score(y_test, rf_preds))
+print("F1 Score:", "%.6f" % metrics.f1_score(y_test, rf_preds))
+cm = metrics.confusion_matrix(y_test, rf_preds, labels = rf_opt.classes_)
+disp = metrics.ConfusionMatrixDisplay(confusion_matrix = cm,display_labels = rf_opt.classes_)
+disp.plot()
+
+# 1. Instantiate the XGBoost classifier
+xgb = XGBClassifier(objective='binary:logistic', random_state=0)
+# 2. Create a dictionary of hyperparameters to tune
+cv_params = {'max_depth': [None], 
+             'min_child_weight': [3,4],
+             'learning_rate': [0.2,.3],
+             'n_estimators': [50],
+             'subsample': [.3,.4],
+             'colsample_bytree': [.3,.4]
+             }
+# 3. Define a list of scoring metrics to capture
+scoring = ['accuracy', 'precision', 'recall', 'f1']
+# 4. Instantiate the GridSearchCV object
+xgb_cv = GridSearchCV(xgb, cv_params, scoring=scoring, cv=5, refit='f1')
+xgb_cv.fit(x_train, y_train)
+# Examine best score
+print('F1 score XGBoost: ', xgb_cv.best_score_)
+# Examine best parameters
+xgb_cv.best_params_
+
+# Call 'make_results()' on the GridSearch object
+make_results('xgb_cv',xgb_cv,'f1')
+
+# Get scores on test data
+xgb_preds = xgb_cv.predict(x_test)
+print("Random Forest")
+print("Accuracy:", "%.6f" % metrics.accuracy_score(y_test, xgb_preds))
+print("Precision:", "%.6f" % metrics.precision_score(y_test, xgb_preds))
+print("Recall:", "%.6f" % metrics.recall_score(y_test, xgb_preds))
+print("F1 Score:", "%.6f" % metrics.f1_score(y_test, xgb_preds))
+cm = metrics.confusion_matrix(y_test, xgb_preds, labels = xgb_cv.classes_)
+disp = metrics.ConfusionMatrixDisplay(confusion_matrix = cm,display_labels = xgb_cv.classes_)
+disp.plot()
+
+plot_importance(xgb_cv.best_estimator_);
+
